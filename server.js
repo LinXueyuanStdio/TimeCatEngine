@@ -1,9 +1,9 @@
 var AV = require('leanengine');
 
 AV.init({
-  appId: process.env.LEANCLOUD_APP_ID,
-  appKey: process.env.LEANCLOUD_APP_KEY,
-  masterKey: process.env.LEANCLOUD_APP_MASTER_KEY
+  appId: process.env.LEANCLOUD_APP_ID || "lVumM4aviuXnmOCmyODnHaEs-MdYXbMMI",
+  appKey: process.env.LEANCLOUD_APP_KEY || "Cy0x5uhPiNlFPCp5W8YWKKJw",
+  masterKey: process.env.LEANCLOUD_APP_MASTER_KEY || "Hm5L7DBWHSfYEisbvbX9IRpf"
 });
 
 // Comment the following line if you do not want to use masterKey.
