@@ -1,10 +1,7 @@
 var AV = require('leanengine');
-var { OBJECT_ID_USER_WATER,
-  OBJECT_ID_USER_EXP,
-  OBJECT_ID_USER_CHARGE,
-  OBJECT_ID_USER_MONEY_CHARGE,
-  OBJECT_ID_USER_CURRENCY } = require('./id');
+var { isFieldId, id2Field, isWaterId } = require('./id');
 var { ITEM_Package } = require('./type');
+
 /**
  * 使用物品
  */
@@ -103,6 +100,32 @@ AV.Cloud.define('receiveMoneyCharge', { fetchUser: true }, function (request) {
   return user.save();
 });
 /**
+ * 一次写入所有字段
+ */
+AV.Cloud.define('receiveForUser', { fetchUser: true }, function (request) {
+  const user = request.currentUser;
+  if (user) {
+    console.log(user.get("nickName") + ' receiveExp');
+  }
+  var exp = request.params.exp;
+  var charge = request.params.charge;
+  var moneyCharge = request.params.moneyCharge;
+  var currency = request.params.currency;
+  if (exp > 0) {
+    user.increment("exp", exp);
+  }
+  if (charge > 0) {
+    user.increment("charge", charge);
+  }
+  if (moneyCharge > 0) {
+    user.increment("moneyCharge", moneyCharge);
+  }
+  if (currency > 0) {
+    user.increment("currency", currency);
+  }
+  return user.save();
+});
+/**
  * 获得物品
  */
 AV.Cloud.define('receiveItems', { fetchUser: true }, function (request) {
@@ -112,11 +135,27 @@ AV.Cloud.define('receiveItems', { fetchUser: true }, function (request) {
   }
   var rewards = request.params.items;
   var rewardMap = new Map();
-  const rewardIds = rewards.map(it => {
-    rewardMap.set(it.uuid, it.count);
-    console.log(it.uuid + " " + it.count);
-    return it.uuid;
-  });
+  var rewardIds = [];
+  var hits = false;
+  for (const reward of rewards) {
+    console.log(reward.uuid + " " + reward.count);
+    const id = reward.uuid;
+    const count = reward.count;
+    if (isFieldId(id)) {
+      if (isWaterId(id) && user.get("water") + count > 999) {
+        return "领取后体力超出 999，拒绝";
+      } else {
+        user.increment(id2Field(id), count);
+        hits = true;
+      }
+    } else {
+      rewardIds.push(id);
+      rewardMap.set(id, reward.count);
+    }
+  }
+  if (hits) {
+    user.save();
+  }
   const innerQuery = new AV.Query('Block');
   innerQuery.containedIn("objectId", rewardIds)
   return new AV.Query('OwnItem')
@@ -162,43 +201,6 @@ AV.Cloud.define('receiveItems', { fetchUser: true }, function (request) {
       }
     })
     .then((newOwnItems) => {
-      console.log("444");
-      var hits = false;
-      for (let ownItem of newOwnItems) {
-        const user = ownItem.get("user");
-        const item = ownItem.get("item");
-        const count = ownItem.get("count");
-        console.log("user=" + user.get("nickName") + ", item=" + item.get("title") + ", count=" + count);
-        const id = item.get("objectId");
-        if (id == OBJECT_ID_USER_WATER) {
-          user.increment("water", count);
-          hits = true;
-        } else if (id == OBJECT_ID_USER_EXP) {
-          user.increment("exp", count);
-          hits = true;
-        } else if (id == OBJECT_ID_USER_CURRENCY) {
-          user.increment("curency", count);
-          hits = true;
-        } else if (id == OBJECT_ID_USER_CHARGE) {
-          user.increment("charge", count);
-          hits = true;
-        } else if (id == OBJECT_ID_USER_MONEY_CHARGE) {
-          user.increment("moneyCharge", count);
-          hits = true;
-        }
-      }
-      if (hits) {
-        user.save();
-        newOwnItems = newOwnItems.filter((it) => {
-          const id = it.get("item").get("objectId");
-          const used = id == OBJECT_ID_USER_WATER ||
-            id == OBJECT_ID_USER_EXP ||
-            id == OBJECT_ID_USER_CHARGE ||
-            id == OBJECT_ID_USER_MONEY_CHARGE ||
-            id == OBJECT_ID_USER_CURRENCY
-          return !used;
-        })
-      }
       return AV.Object.saveAll(newOwnItems);
     })
     .catch((error) => {
@@ -225,8 +227,8 @@ AV.Cloud.define('readMail', function (request) {
         const head = JSON.parse(structure);
         if (head.rewards) {
           return AV.Cloud.run('receiveItems', {
-            rewards: head.rewards
-          });
+            items: head.rewards
+          }, { user: user });
         }
         return true;
       }
