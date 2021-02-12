@@ -5,11 +5,13 @@ var { OBJECT_ID_USER_WATER,
   OBJECT_ID_USER_MONEY_CHARGE,
   OBJECT_ID_USER_CURRENCY } = require('./id');
 var { ITEM_Package } = require('./type');
-
+/**
+ * 使用物品
+ */
 AV.Cloud.define('useItem', { fetchUser: true }, function (request) {
   const user = request.currentUser;
   if (user) {
-    console.log(user.get("nickName"));
+    console.log(user.get("nickName") + ' useItem');
   }
   var ownItemId = request.params.ownItemId;
   var count = parseInt(request.params.count);
@@ -26,7 +28,6 @@ AV.Cloud.define('useItem', { fetchUser: true }, function (request) {
       const head2 = JSON.parse(head.structure);
       console.log(head);
       console.log(item.get("subtype"));
-      console.log(head2.items);
       if (item.get("subtype") == ITEM_Package) {
         if (head2.items) {
           return AV.Cloud.run('receiveItems', {
@@ -46,7 +47,6 @@ AV.Cloud.define('useItem', { fetchUser: true }, function (request) {
     .then((ownItem) => {
       if (ownItem) {
         console.log(`当前数量为：${ownItem.get('count')}`);
-        console.log(`当前数量为：${ownItem}`);
         return ownItem;
       }
     })
@@ -54,36 +54,85 @@ AV.Cloud.define('useItem', { fetchUser: true }, function (request) {
       console.log(error);
     });
 });
-
+/**
+ * 获得体力
+ */
+AV.Cloud.define('receiveWater', { fetchUser: true }, function (request) {
+  const user = request.currentUser;
+  if (user) {
+    console.log(user.get("nickName") + ' receiveWater');
+  }
+  var water = request.params.water;
+  user.increment("water", water);
+  return user.save();
+});
+/**
+ * 获得经验
+ */
+AV.Cloud.define('receiveExp', { fetchUser: true }, function (request) {
+  const user = request.currentUser;
+  if (user) {
+    console.log(user.get("nickName") + ' receiveExp');
+  }
+  var exp = request.params.exp;
+  user.increment("exp", exp);
+  return user.save();
+});
+/**
+ * 获得源石
+ */
+AV.Cloud.define('receiveCharge', { fetchUser: true }, function (request) {
+  const user = request.currentUser;
+  if (user) {
+    console.log(user.get("nickName") + ' receiveCharge');
+  }
+  var charge = request.params.charge;
+  user.increment("charge", charge);
+  return user.save();
+});
+/**
+ * 获得付费源石
+ */
+AV.Cloud.define('receiveMoneyCharge', { fetchUser: true }, function (request) {
+  const user = request.currentUser;
+  if (user) {
+    console.log(user.get("nickName") + ' receiveMoneyCharge');
+  }
+  var moneyCharge = request.params.moneyCharge;
+  user.increment("moneyCharge", moneyCharge);
+  return user.save();
+});
+/**
+ * 获得物品
+ */
 AV.Cloud.define('receiveItems', { fetchUser: true }, function (request) {
   const user = request.currentUser;
   if (user) {
-    console.log(user.get("nickName"));
+    console.log(user.get("nickName") + ' receiveItems');
   }
   var rewards = request.params.items;
   var rewardMap = new Map();
   const rewardIds = rewards.map(it => {
     rewardMap.set(it.uuid, it.count);
+    console.log(it.uuid + " " + it.count);
     return it.uuid;
   });
-  console.log(`当前items为：${rewardMap}`);
   const innerQuery = new AV.Query('Block');
   innerQuery.containedIn("objectId", rewardIds)
   return new AV.Query('OwnItem')
+    .matchesQuery('item', innerQuery)
     .include("user")
     .include("item")
-    .matchesQuery('item', innerQuery)
+    .include("count")
     .find()
     .then((ownItems) => {
-      console.log("333");
-      console.log(ownItems);
+      console.log("already owns:");
       for (let ownItem of ownItems) {
-        const user = ownItem.get("user");
-        const item = ownItem.get("item");
+        const nickName = ownItem.get("user").get("nickName");
+        const title = ownItem.get("item").get("title");
         const count = ownItem.get("count");
-        console.log("user=" + user.get("nickName") + ", item=" + item.get("title") + ", count=" + count);
+        console.log("user=" + nickName + ", item=" + title + ", count=" + count);
       }
-      const Block = AV.Object.extend('Block');
       const OwnItem = AV.Object.extend('OwnItem');
       if (ownItems) {
         for (let ownItem of ownItems) {
@@ -93,11 +142,10 @@ AV.Cloud.define('receiveItems', { fetchUser: true }, function (request) {
           rewardMap.delete(uuid);
         }
         for (let uuid of rewardMap.keys()) {
-          console.log(uuid);
           const ownItem = new OwnItem();
           ownItem.set("user", user);
           ownItem.set("item", AV.Object.createWithoutData("Block", uuid));
-          ownItem.set("count", rewardMap[uuid]);
+          ownItem.set("count", rewardMap.get(uuid));
           ownItems.push(ownItem);
         }
         return ownItems;
@@ -106,8 +154,7 @@ AV.Cloud.define('receiveItems', { fetchUser: true }, function (request) {
         const newOwnItems = rewards.map(it => {
           const ownItem = new OwnItem();
           ownItem.set("user", user);
-          const item = Block.createWithoutData("Block", it.uuid);
-          ownItem.set("item", item);
+          ownItem.set("item", AV.Object.createWithoutData("Block", it.uuid));
           ownItem.set("count", it.count);
           return ownItem;
         });
@@ -124,19 +171,19 @@ AV.Cloud.define('receiveItems', { fetchUser: true }, function (request) {
         console.log("user=" + user.get("nickName") + ", item=" + item.get("title") + ", count=" + count);
         const id = item.get("objectId");
         if (id == OBJECT_ID_USER_WATER) {
-          user.set("water", user.get("water") + count);
+          user.increment("water", count);
           hits = true;
         } else if (id == OBJECT_ID_USER_EXP) {
-          user.set("exp", user.get("exp") + count);
+          user.increment("exp", count);
           hits = true;
         } else if (id == OBJECT_ID_USER_CURRENCY) {
-          user.set("curency", user.get("curency") + count);
+          user.increment("curency", count);
           hits = true;
         } else if (id == OBJECT_ID_USER_CHARGE) {
-          user.set("charge", user.get("charge") + count);
+          user.increment("charge", count);
           hits = true;
         } else if (id == OBJECT_ID_USER_MONEY_CHARGE) {
-          user.set("moneyCharge", user.get("moneyCharge") + count);
+          user.increment("moneyCharge", count);
           hits = true;
         }
       }
