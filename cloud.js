@@ -6,7 +6,11 @@ var { OBJECT_ID_USER_WATER,
   OBJECT_ID_USER_CURRENCY } = require('./id');
 var { ITEM_Package } = require('./type');
 
-AV.Cloud.define('useItem', function (request) {
+AV.Cloud.define('useItem', { fetchUser: true }, function (request) {
+  const user = request.currentUser;
+  if (user) {
+    console.log(user.get("nickName"));
+  }
   var ownItemId = request.params.ownItemId;
   var count = parseInt(request.params.count);
   const ownItem = AV.Object.createWithoutData('OwnItem', ownItemId);
@@ -19,57 +23,81 @@ AV.Cloud.define('useItem', function (request) {
       const user = ownItem.get("user");
       const item = ownItem.get("item");
       const head = JSON.parse(item.get("structure"));
+      const head2 = JSON.parse(head.structure);
       console.log(head);
+      console.log(item.get("subtype"));
+      console.log(head2.items);
       if (item.get("subtype") == ITEM_Package) {
-        if (head.rewards) {
+        if (head2.items) {
           return AV.Cloud.run('receiveItems', {
-            rewards: head.items
-          });
+            items: head2.items
+          }, { user: user });
         }
       }
     })
     .then((res) => {
-      return ownItem.save(null, {
-        query: new AV.Query('OwnItem').greaterThanOrEqualTo('count', count),
-        fetchWhenSave: true
-      })
+      if (res) {
+        return ownItem.save(null, {
+          query: new AV.Query('OwnItem').greaterThanOrEqualTo('count', count),
+          fetchWhenSave: true
+        })
+      }
     })
     .then((ownItem) => {
-      console.log(`当前数量为：${ownItem.get('count')}`);
-      console.log(`当前数量为：${ownItem}`);
-      return ownItem;
+      if (ownItem) {
+        console.log(`当前数量为：${ownItem.get('count')}`);
+        console.log(`当前数量为：${ownItem}`);
+        return ownItem;
+      }
+    })
+    .catch((error) => {
+      console.log(error);
     });
 });
 
-AV.Cloud.define('receiveItems', function (request) {
-  var rewards = request.params.rewards;
+AV.Cloud.define('receiveItems', { fetchUser: true }, function (request) {
+  const user = request.currentUser;
+  if (user) {
+    console.log(user.get("nickName"));
+  }
+  var rewards = request.params.items;
   var rewardMap = new Map();
   const rewardIds = rewards.map(it => {
-    rewardMap.set(uuid, it.count);
+    rewardMap.set(it.uuid, it.count);
     return it.uuid;
   });
-  console.log(`当前id为：${rewards}`);
+  console.log(`当前items为：${rewardMap}`);
+  const innerQuery = new AV.Query('Block');
+  innerQuery.containedIn("objectId", rewardIds)
   return new AV.Query('OwnItem')
     .include("user")
     .include("item")
-    .containedIn("item.objectId", rewardIds)
+    .matchesQuery('item', innerQuery)
+    .find()
     .then((ownItems) => {
-      const user = request.currentUser;
+      console.log("333");
+      console.log(ownItems);
+      for (let ownItem of ownItems) {
+        const user = ownItem.get("user");
+        const item = ownItem.get("item");
+        const count = ownItem.get("count");
+        console.log("user=" + user.get("nickName") + ", item=" + item.get("title") + ", count=" + count);
+      }
       const Block = AV.Object.extend('Block');
       const OwnItem = AV.Object.extend('OwnItem');
       if (ownItems) {
         for (let ownItem of ownItems) {
-          const uuid = ownItem.item.objectId;
+          const uuid = ownItem.get("item").get("objectId");
+          console.log(uuid);
           ownItem.set("count", ownItem.get("count") + rewardMap.get(uuid));
           rewardMap.delete(uuid);
         }
-        for (let reward of rewardMap) {
+        for (let uuid of rewardMap.keys()) {
+          console.log(uuid);
           const ownItem = new OwnItem();
           ownItem.set("user", user);
-          const item = new Block();
-          item.set("objectId", reward.uuid);
-          ownItem.set("item", item);
-          ownItem.set("count", reward.count);
+          ownItem.set("item", AV.Object.createWithoutData("Block", uuid));
+          ownItem.set("count", rewardMap[uuid]);
           ownItems.push(ownItem);
         }
         return ownItems;
@@ -78,8 +106,7 @@ AV.Cloud.define('receiveItems', function (request) {
         const newOwnItems = rewards.map(it => {
           const ownItem = new OwnItem();
           ownItem.set("user", user);
-          const item = new Block();
-          item.set("objectId", it.uuid);
+          const item = Block.createWithoutData("Block", it.uuid);
           ownItem.set("item", item);
           ownItem.set("count", it.count);
           return ownItem;
@@ -88,11 +115,14 @@ AV.Cloud.define('receiveItems', function (request) {
       }
     })
     .then((newOwnItems) => {
+      console.log("444");
       var hits = false;
       for (let ownItem of newOwnItems) {
+        const user = ownItem.get("user");
         const item = ownItem.get("item");
         const count = ownItem.get("count");
-        const id = item.get("onjectId");
+        console.log("user=" + user.get("nickName") + ", item=" + item.get("title") + ", count=" + count);
+        const id = item.get("objectId");
         if (id == OBJECT_ID_USER_WATER) {
           user.set("water", user.get("water") + count);
           hits = true;
