@@ -3,6 +3,7 @@ const OBJECT_ID_USER_EXP = "6023206d9c05de42545dd133";
 const OBJECT_ID_USER_CHARGE = "60221e449c05de42545d8a4d";
 const OBJECT_ID_USER_MONEY_CHARGE = "602322339c05de42545dd15d";
 const OBJECT_ID_USER_CURRENCY = "60221d94286a8427b94b40b0";
+const OBJECT_ID_CUBE_STONE = "60221320286a8427b94b3cf7";
 
 function isFieldId(id) {
   return id == OBJECT_ID_USER_WATER ||
@@ -23,5 +24,5 @@ function id2Field(id) {
   return null;
 }
 module.exports = {
-  isFieldId, id2Field, isWaterId
+  isFieldId, id2Field, isWaterId, OBJECT_ID_CUBE_STONE
 }

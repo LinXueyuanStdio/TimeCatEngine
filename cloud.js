@@ -1,6 +1,6 @@
 var AV = require('leanengine');
-var { isFieldId, id2Field, isWaterId } = require('./id');
-var { ITEM_Package } = require('./type');
+var { isFieldId, id2Field, isWaterId, OBJECT_ID_CUBE_STONE } = require('./id');
+var { ITEM_Package, ITEM_Cube } = require('./type');
 
 /**
  * 使用物品
@@ -11,9 +11,7 @@ AV.Cloud.define('useItem', { fetchUser: true }, function (request) {
     console.log(user.get("nickName") + ' useItem');
   }
   var ownItemId = request.params.ownItemId;
-  var count = parseInt(request.params.count);
-  const ownItem = AV.Object.createWithoutData('OwnItem', ownItemId);
-  ownItem.increment('count', -count);
+  var itemsBatchCount = parseInt(request.params.count);
   return new AV.Query('OwnItem')
     .include("user")
     .include("item")
@@ -21,22 +19,31 @@ AV.Cloud.define('useItem', { fetchUser: true }, function (request) {
     .then((ownItem) => {
       const user = ownItem.get("user");
       const item = ownItem.get("item");
-      const head = JSON.parse(item.get("structure"));
-      const head2 = JSON.parse(head.structure);
+      const head = item.get("structure");
+      const head2 = head.structure;
       console.log(head);
-      console.log(item.get("subtype"));
-      if (item.get("subtype") == ITEM_Package) {
+      const subtype = item.get("subtype");
+      console.log(subtype);
+      if (subtype == ITEM_Package) {
         if (head2.items) {
           return AV.Cloud.run('receiveItems', {
-            items: head2.items
+            items: head2.items,
+            count: itemsBatchCount
           }, { user: user });
         }
+      } else if (subtype == ITEM_Cube) {
+        return AV.Cloud.run('receiveCubes', {
+          uuid: head2.uuid,
+          count: itemsBatchCount
+        }, { user: user });
       }
     })
     .then((res) => {
       if (res) {
+        const ownItem = AV.Object.createWithoutData('OwnItem', ownItemId);
+        ownItem.increment('count', -itemsBatchCount);
         return ownItem.save(null, {
-          query: new AV.Query('OwnItem').greaterThanOrEqualTo('count', count),
+          query: new AV.Query('OwnItem').greaterThanOrEqualTo('count', itemsBatchCount),
           fetchWhenSave: true
         })
       }
@@ -128,19 +135,57 @@ AV.Cloud.define('receiveForUser', { fetchUser: true }, function (request) {
 /**
  * 获得物品
  */
+AV.Cloud.define('receiveCubes', { fetchUser: true }, function (request) {
+  const user = request.currentUser;
+  if (user) {
+    console.log(user.get("nickName") + ' receiveCube');
+  }
+  var cubeId = request.params.uuid;
+  var count = request.params.count;
+  const Block = AV.Object.extend('Block');
+  const OwnCube = AV.Object.extend('OwnCube');
+  const cube = Block.createWithoutData("Block", cubeId);
+  return new AV.Query('OwnCube')
+    .include("user")
+    .include("cube")
+    .equalTo("user", user)
+    .equalTo("cube", cube)
+    .first()
+    .then((ownCube) => {
+      console.log(ownCube);
+      if (ownCube) {
+        return AV.Cloud.run('receiveItems', {
+          items: [{ uuid: OBJECT_ID_CUBE_STONE, count: 5 }],
+          count: count
+        }, { user: user });
+      } else {
+        const ownCube = new OwnCube();
+        ownCube.set("user", user);
+        ownCube.set("cube", cube);
+        return AV.Object.save(ownCube);
+      }
+    })
+    .catch((error) => {
+      console.log(error);
+    });
+})
+/**
+ * 获得物品
+ */
 AV.Cloud.define('receiveItems', { fetchUser: true }, function (request) {
   const user = request.currentUser;
   if (user) {
     console.log(user.get("nickName") + ' receiveItems');
   }
   var rewards = request.params.items;
+  var rewardsCount = request.params.count;
   var rewardMap = new Map();
   var rewardIds = [];
   var hits = false;
   for (const reward of rewards) {
     console.log(reward.uuid + " " + reward.count);
     const id = reward.uuid;
-    const count = reward.count;
+    const count = reward.count * rewardsCount;
     if (isFieldId(id)) {
       if (isWaterId(id) && user.get("water") + count > 999) {
         return "领取后体力超出 999，拒绝";
@@ -150,12 +195,13 @@ AV.Cloud.define('receiveItems', { fetchUser: true }, function (request) {
       }
     } else {
       rewardIds.push(id);
-      rewardMap.set(id, reward.count);
+      rewardMap.set(id, count);
     }
   }
   if (hits) {
     user.save();
   }
+  if (rewardIds.length <= 0) return;
   const innerQuery = new AV.Query('Block');
   innerQuery.containedIn("objectId", rewardIds)
   return new AV.Query('OwnItem')
@@ -214,6 +260,7 @@ AV.Cloud.define('readMail', function (request) {
   return new AV.Query('OwnMail')
     .include("user")
     .include("mail")
+    .include("receive")
     .get(ownMailId)
     .then((ownMail) => {
       if (ownMail.get("receive") == true) {
@@ -222,15 +269,21 @@ AV.Cloud.define('readMail', function (request) {
         console.log(`当前为：${ownMail}`);
         const mail = ownMail.get("mail");
         const user = ownMail.get("user");
-        const structure = mail.get("structure");
-        console.log(structure);
-        const head = JSON.parse(structure);
+        const head = mail.get("structure");
         if (head.rewards) {
           return AV.Cloud.run('receiveItems', {
-            items: head.rewards
+            items: head.rewards,
+            count: 1
           }, { user: user });
         }
         return true;
+      }
+    })
+    .then((ans) => {
+      if (ans) {
+        const ownMail = AV.Object.createWithoutData('OwnMail', ownMailId);
+        ownMail.set('receive', true);
+        return ownMail.save();
       }
     })
     .catch((error) => {
