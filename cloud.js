@@ -1,6 +1,6 @@
 var AV = require('leanengine');
 var { isFieldId, id2Field, isWaterId, OBJECT_ID_CUBE_STONE } = require('./id');
-var { ITEM_Package, ITEM_Cube } = require('./type');
+var { ITEM_Package, ITEM_Cube, ITEM_Data, BLOCK_COMMENT, ACTION_Like } = require('./type');
 
 /**
  * 使用物品
@@ -25,6 +25,7 @@ AV.Cloud.define('useItem', { fetchUser: true }, function (request) {
       const subtype = item.get("subtype");
       console.log(subtype);
       if (subtype == ITEM_Package) {
+        //打开礼包，获得道具
         if (head2.items) {
           return AV.Cloud.run('receiveItems', {
             items: head2.items,
@@ -32,8 +33,19 @@ AV.Cloud.define('useItem', { fetchUser: true }, function (request) {
           }, { user: user });
         }
       } else if (subtype == ITEM_Cube) {
+        //打开方块，获得对应的方块
         return AV.Cloud.run('receiveCubes', {
           uuid: head2.uuid,
+          count: itemsBatchCount
+        }, { user: user });
+      } else if (subtype == ITEM_Data) {
+        //使用数据道具，获得数据
+        const targetId = request.params.targetId;
+        return AV.Cloud.run('receiveData', {
+          tableName: head2.tableName,
+          where: head2.where,
+          num: head2.num,
+          targetId: targetId,
           count: itemsBatchCount
         }, { user: user });
       }
@@ -57,6 +69,25 @@ AV.Cloud.define('useItem', { fetchUser: true }, function (request) {
     .catch((error) => {
       console.log(error);
     });
+});
+
+/**
+ * 获得数据
+ */
+AV.Cloud.define('receiveData', { fetchUser: true }, function (request) {
+  const user = request.currentUser;
+  if (user) {
+    console.log(user.get("nickName") + ' receiveData');
+  }
+  console.log(request.params);
+  const tableName = request.params.tableName;
+  const where = request.params.where;
+  const num = request.params.num;
+  const targetId = request.params.targetId;
+  const count = request.params.count;
+  const obj = AV.Object.createWithoutData(tableName, targetId);
+  obj.increment(where, num * count);
+  return obj.save();
 });
 /**
  * 获得体力
@@ -140,6 +171,7 @@ AV.Cloud.define('receiveCubes', { fetchUser: true }, function (request) {
   if (user) {
     console.log(user.get("nickName") + ' receiveCube');
   }
+  console.log(request.params);
   var cubeId = request.params.uuid;
   var count = request.params.count;
   const Block = AV.Object.extend('Block');
@@ -162,7 +194,7 @@ AV.Cloud.define('receiveCubes', { fetchUser: true }, function (request) {
         const ownCube = new OwnCube();
         ownCube.set("user", user);
         ownCube.set("cube", cube);
-        return AV.Object.save(ownCube);
+        return ownCube.save();
       }
     })
     .catch((error) => {
@@ -301,4 +333,84 @@ AV.Cloud.define('userStatistic', function (request) {
     }
     return sum / results.length;
   });
+});
+
+AV.Cloud.define('findAllComments', function (request) {
+  const user = request.currentUser;
+  if (user) {
+    console.log(user.get("nickName") + ' findAllComments');
+  }
+  const skip = request.params.skip;
+  const pageSize = request.params.pageSize;
+  const blockId = request.params.blockId;
+  const block = AV.Object.createWithoutData("Block", blockId);
+  return new AV.Query('Block')
+    .equalTo('parent', block)
+    .equalTo('title', blockId)
+    .equalTo('type', BLOCK_COMMENT)
+    .limit(pageSize)
+    .skip(skip)
+    .include("user")
+    .find()
+    .then(function (results) {
+      var commentQueries = [];
+      for (let comment of results) {
+        const title = comment.get("title") + "/" + comment.get("objectId");
+        const commentQuery = new AV.Query('Block')
+          .limit(3)
+          .equalTo('parent', block)
+          .equalTo('type', BLOCK_COMMENT)
+          .include("user")
+          .startsWith("title", title)
+          .addDescending("comments")
+          .addDescending("likes")
+          .find();
+        commentQueries.push(commentQuery);
+      }
+      const likeQuery = new AV.Query('Action')
+        .equalTo('user', user)
+        .equalTo('type', ACTION_Like)
+        .containedIn("block", results)
+        .find();
+      const main = new Promise((resolve, reject) => {
+        resolve(results);
+      })
+      return Promise.all([main, likeQuery, ...commentQueries]);
+    })
+    .then(async (ans) => {
+      const likes = ans[1];
+      const map = new Map();
+      if (likes.length > 0) {
+        for (const like of likes) {
+          map.set(like.get("block").get("objectId"), true);
+        }
+      }
+      // const commentQueries = ans[0];
+      const main = ans[0];
+      for (let index = 0; index < main.length; index++) {
+        const comment = main[index];
+        const query = ans[index+2];
+        // const ans = await query;
+        comment.set("hot_children", query);
+        const like = map.get(comment.get("objectId"));
+        if (like) {
+          comment.set("user_like", true);
+        }
+      }
+      return main;
+    })
+    .then((comments) => {
+      for (const comment of comments) {
+        console.log("   " + comment.get("objectId") + " -- " + comment.get("user_like") + " -- " + comment.get("title"));
+        const children = comment.get("hot_children");
+        for (const child of children) {
+          console.log("      " + child.get("objectId") + " -- " + child.get("title"));
+        }
+        console.log("----");
+      }
+      return comments;
+    })
+    .catch((error) => {
+      console.log(error);
+    });
 });
